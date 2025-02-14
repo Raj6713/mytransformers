@@ -87,4 +87,36 @@ class CacheConfig:
     
     @classmethod
     def from_dict(cls, config_dict, **kwargs):
-        
+        """_summary_
+
+        Args:
+            config_dict (_type_): _description_
+        """
+        config = cls(**config_dict) 
+        to_remove = []
+        for key, value in kwargs.items():
+            if hasattr(config, key):
+                setattr(config, key,value)
+                to_remove.append(key)
+        for key in to_remove:
+            kwargs.pop(key, None)
+        return config
+    
+    def to_json_file(self, json_file_path:Union[str, os.PathLike]):
+        """_summary_
+
+        Args:
+            json_file_path (Union[str, os.PathLike]): _description_
+        """
+        with open(json_file_path, "w", encoding="utf-8") as writer:
+            config_dict = self.to_dict()
+            json_string = json.dumps(config_dict, indent=2, sort_keys=True) + "\n"
+            writer.write(json_string)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return copy.deepcopy(self.__dict__)
+    
+    def __iter__(self):
+        for attr, value in copy.deepcopy(self.__dict__).items():
+            yield attr, value
+            
