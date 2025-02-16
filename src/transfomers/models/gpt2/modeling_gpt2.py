@@ -145,6 +145,7 @@ def eager_attention_forward(
 
     return attn_output, attn_weights
 
+
 class GPT2Attention(nn.Module):
     def __init__(self, config, is_cross_attention=False, layer_idx=None):
         super().__init__()
@@ -152,8 +153,10 @@ class GPT2Attention(nn.Module):
         max_positions = config.max_position_embeddings
         self.register_buffer(
             "bias",
-            torch.tril(torch.ones((max_positions, max_positions), dtype=torch.bool)).view(1, 1, max_positions, max_positions),
-            persistent=False
+            torch.tril(
+                torch.ones((max_positions, max_positions), dtype=torch.bool)
+            ).view(1, 1, max_positions, max_positions),
+            persistent=False,
         )
         self.register_buffer("masked_bias", torch.tensor(-1e4), persistent=False)
         self.embed_dim = config.hidden_size
@@ -172,10 +175,10 @@ class GPT2Attention(nn.Module):
         self.reorder_and_upcast_attn = config.reorder_and_upcast_attn
 
         if self.is_cross_attention:
-            self.c_attn = Conv1D(2*self.embed_dim, self.embed_dim)
+            self.c_attn = Conv1D(2 * self.embed_dim, self.embed_dim)
             self.q_attn = Conv1D(self.embed_dim, self.embed_dim)
         else:
-            self.c_attn = Conv1D(3*self.embed_dim, self.embed_dim)
+            self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
         self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
@@ -183,62 +186,86 @@ class GPT2Attention(nn.Module):
         self.pruned_heads = set()
 
     def prune_heads(self, heads):
-        if len(heads)==0:
+        if len(heads) == 0:
             return
-        heads, index = find_pruneable_heads_and_indicies(heads, self.num_heads, self.head_dim, self.pruned_heads)
-        index_attn = torch.cat([index, index+self.split_size, index+(2*self.split_size)])
+        heads, index = find_pruneable_heads_and_indicies(
+            heads, self.num_heads, self.head_dim, self.pruned_heads
+        )
+        index_attn = torch.cat(
+            [index, index + self.split_size, index + (2 * self.split_size)]
+        )
         self.c_attn = prune_conv1d_layer(self.c_attn, index_attn, dim=1)
-        self.c_proj = prune_conv1d_layer(self.c_proj, index,dim=0)
-        self.split_size = (self.split_size//self.num_heads) *(self.num_heads-len(heads))
+        self.c_proj = prune_conv1d_layer(self.c_proj, index, dim=0)
+        self.split_size = (self.split_size // self.num_heads) * (
+            self.num_heads - len(heads)
+        )
         self.num_heads = self.num_heads - len(heads)
         self.pruned_heads = self.prune_heads.union(heads)
 
-    def _upcast_and_reordered_attn(self, query, key, value, attention_mask=None, head_mask=None):
-        bsz, num_heads,q_seq_len, dk = query.size()
+    def _upcast_and_reordered_attn(
+        self, query, key, value, attention_mask=None, head_mask=None
+    ):
+        bsz, num_heads, q_seq_len, dk = query.size()
         _, _, k_seq_len, _ = key.size()
-        attn_weights = torch.empty(bsz*num_heads, q_seq_len, k_seq_len, dtype=torch.float32, device=query.device)
+        attn_weights = torch.empty(
+            bsz * num_heads,
+            q_seq_len,
+            k_seq_len,
+            dtype=torch.float32,
+            device=query.device,
+        )
         scale_factor = 1.0
         if self.scale_attn_weights:
-            scale_factor/=float(value.size(-1))**0.5
+            scale_factor /= float(value.size(-1)) ** 0.5
         if self.scale_attn_by_inverse_layer_idx:
-            scale_factor /= float(self.layer_idx+1)
+            scale_factor /= float(self.layer_idx + 1)
         with torch.amp.autocast(query.device.type, enabled=False):
-            q, k = query.reshape(-1, q_seq_len, dk), key.transpose(-1,-2).reshape(-1, dk, k_seq_len)
-            attn_weights = torch.baddbmm(attn_weights, q.float(), k.float(), beta=0, alpha=scale_factor)
+            q, k = query.reshape(-1, q_seq_len, dk), key.transpose(-1, -2).reshape(
+                -1, dk, k_seq_len
+            )
+            attn_weights = torch.baddbmm(
+                attn_weights, q.float(), k.float(), beta=0, alpha=scale_factor
+            )
             attn_weights = attn_weights.reshape(bsz, num_heads, q_seq_len, k_seq_len)
-        
+
         if not self.is_cross_attention:
             query_length, key_length = query.size(-2), key.size(-2)
-            causal_mask = self.bias[:, :, key_length-query_length:key_length, :key_length]
+            causal_mask = self.bias[
+                :, :, key_length - query_length : key_length, :key_length
+            ]
             mask_value = torch.finfo(attn_weights.dtype).min
-            mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
+            mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(
+                attn_weights.device
+            )
             attn_weights = torch.where(causal_mask, attn_weights, mask_value)
         if attention_mask is not None:
             attn_weights = attn_weights + attention_mask
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
         if attn_weights.dtype != torch.float32:
-            raise RuntimeError("Error with upcasting, attn_weights does not have dtype torch.float32")
+            raise RuntimeError(
+                "Error with upcasting, attn_weights does not have dtype torch.float32"
+            )
         attn_weights = attn_weights.type(value.dtype)
         attn_weights = self.attn_dropout(attn_weights)
 
         if head_mask is not None:
             attn_weights = attn_weights * head_mask
         attn_output = torch.matmul(attn_weights, value)
-        attn_output = attn_output.transpose(1,2)
+        attn_output = attn_output.transpose(1, 2)
         return attn_output, attn_weights
-    
+
     def forward(
-            self,
-            hidden_states: Optional[Tuple[torch.FloatTensor]],
-            layer_past: Optional[Tuple[torch.FloatTensor]]=None,
-            attention_mask: Optional[torch.FloatTensor]=None,
-            head_mask: Optional[torch.Tensor] = None,
-            encoder_hidden_states:Optional[torch.Tensor] = None,
-            encoder_attention_mask: Optional[torch.Tensor]=None,
-            use_cache: Optional[bool] = False,
-            output_attentions: Optional[bool]=False,
-            **kwargs
+        self,
+        hidden_states: Optional[Tuple[torch.FloatTensor]],
+        layer_past: Optional[Tuple[torch.FloatTensor]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+        **kwargs,
     ):
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
@@ -247,38 +274,51 @@ class GPT2Attention(nn.Module):
                     "Pleae make sure to instantaniate class with `GPT2Attention(..., is_cross_attention=True)`"
                 )
             query_states = self.q_attn(hidden_states)
-            key_states, value_states = self.c_attn(encoder_hidden_states).split(self.split_size, dim=2)
+            key_states, value_states = self.c_attn(encoder_hidden_states).split(
+                self.split_size, dim=2
+            )
             attention_mask = encoder_attention_mask
         else:
-            query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            query_states, key_states, value_states = self.c_attn(hidden_states).split(
+                self.split_size, dim=2
+            )
         shape_q = (*query_states.shape[:-1], self.head_dim)
         shape_kv = (*key_states.shape[:-1], -1, self.head_dim)
-        query_states = query_states.view(shape_q).transpose(1,2)
-        key_states = key_states.view(shape_kv).transpose(1,2)
-        value_states = value_states.view(shape_kv).transpose(1,2)
+        query_states = query_states.view(shape_q).transpose(1, 2)
+        key_states = key_states.view(shape_kv).transpose(1, 2)
+        value_states = value_states.view(shape_kv).transpose(1, 2)
         if layer_past is not None:
             past_key, past_value = layer_past
-            key_states = torch.cat((past_key,key_states), dim=-2)
+            key_states = torch.cat((past_key, key_states), dim=-2)
             value_states = torch.cat((past_value, value_states), dim=-2)
-        
+
         if use_cache is True:
             present = (key_states, value_states)
         else:
             present = None
         is_cross_attention = encoder_hidden_states is not None
-        is_causal = attention_mask is None and query_states.shape[-2] > 1 and not is_cross_attention
+        is_causal = (
+            attention_mask is None
+            and query_states.shape[-2] > 1
+            and not is_cross_attention
+        )
 
         using_eager = self.config._attn_implementation == "eager"
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
-            if self.config._attn_implementation == "sdpa" and (output_attentions or head_mask is not None):
+            if self.config._attn_implementation == "sdpa" and (
+                output_attentions or head_mask is not None
+            ):
                 using_eager = True
                 logger.warning_once(
                     "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`, Falling back to"
-                    "eager attention. This warning can be removed using the argumnet `attn_implemenation=eager` when loading the model")
+                    "eager attention. This warning can be removed using the argumnet `attn_implemenation=eager` when loading the model"
+                )
             else:
-                attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implentation]
-        
+                attention_interface = ALL_ATTENTION_FUNCTIONS[
+                    self.config._attn_implentation
+                ]
+
         if using_eager and self.reorder_and_upcast_attn:
             attn_output, attn_weights = self._upcast_and_reordered_attn(
                 query_states, key_states, value_states, attention_mask, head_mask
@@ -291,11 +331,11 @@ class GPT2Attention(nn.Module):
                 value_states,
                 attention_mask,
                 head_mask=head_mask,
-                dropout = self.attn_dropout.p if self.training else 0.0,
+                dropout=self.attn_dropout.p if self.training else 0.0,
                 is_causal=is_causal,
-                **kwargs
+                **kwargs,
             )
-        attn_output = attn_output.reshape(*attn_output.shape[:-2],-1).contiguous()
+        attn_output = attn_output.reshape(*attn_output.shape[:-2], -1).contiguous()
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
 
@@ -303,7 +343,8 @@ class GPT2Attention(nn.Module):
         if output_attentions:
             outputs += (attn_weights,)
         return outputs
-    
+
+
 class GPT2MLP(nn.Module):
     def __init__(self, intermediate_size, config):
         super().__init__()
@@ -313,38 +354,48 @@ class GPT2MLP(nn.Module):
         self.act = ACT2FN[config.activation_function]
         self.dropout = nn.Dropout(config.resid_pdrop)
 
-    def forward(self, hidden_states:Optional[Tuple[torch.FloatTensor]]) -> torch.FloatTensor:
+    def forward(
+        self, hidden_states: Optional[Tuple[torch.FloatTensor]]
+    ) -> torch.FloatTensor:
         hidden_states = self.c_fc(hidden_states)
         hidden_states = self.act(hidden_states)
         hidden_states = self.c_proj(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
-    
+
 
 class GPT2Block(nn.Module):
     def __init__(self, config, layer_idx=None):
         super().__init__()
         hidden_size = config.hidden_size
-        inner_dim = config.n_inner if config.n_inner is not None else 4*hidden_size
+        inner_dim = config.n_inner if config.n_inner is not None else 4 * hidden_size
         self.ln_l = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
         self.attn = GPT2Attention(config=config, layer_idx=layer_idx)
         self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
         if config.add_cross_attention:
-            self.crossattention = GPT2Attention(config=config, is_cross_attention=True, layer_idx=layer_idx)
-            self.ln_cross_attn = nn.LayerNorm(hidden_size,eps=config.layer_norm_epsilon)
+            self.crossattention = GPT2Attention(
+                config=config, is_cross_attention=True, layer_idx=layer_idx
+            )
+            self.ln_cross_attn = nn.LayerNorm(
+                hidden_size, eps=config.layer_norm_epsilon
+            )
         self.mlp = GPT2MLP(inner_dim, config)
 
-    def forward(self,
-                hidden_states: Optional[Tuple[torch.FloatTensor]],
-                layer_past: Optional[Tuple[torch.FloatTensor]],
-                attention_mask: Optional[torch.FloatTensor]=None,
-                head_mask : Optional[torch.FloatTensor]=None,
-                encoder_hidden_states:Optional[torch.Tensor]=None,
-                encoder_attention_mask:Optional[torch.FloatTensor]=None,
-                use_cache:Optional[bool]=False,
-                output_attentions:Optional[bool]=False,
-                ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor,...]]]]:
+    def forward(
+        self,
+        hidden_states: Optional[Tuple[torch.FloatTensor]],
+        layer_past: Optional[Tuple[torch.FloatTensor]],
+        attention_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+    ) -> Union[
+        Tuple[torch.Tensor],
+        Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]],
+    ]:
         residual = hidden_states
         hidden_states = self.ln_l(hidden_states)
         attn_outputs = self.attn(
@@ -353,11 +404,11 @@ class GPT2Block(nn.Module):
             attention_mask=attention_mask,
             head_mask=head_mask,
             use_cache=use_cache,
-            output_attentions=output_attentions
+            output_attentions=output_attentions,
         )
         attn_output = attn_outputs[0]
         outputs = attn_outputs[1:]
-        hidden_states = attn_output+residual
+        hidden_states = attn_output + residual
         if encoder_hidden_states is not None:
             if not hasattr(self, "crossattention"):
                 raise ValueError(
@@ -372,7 +423,7 @@ class GPT2Block(nn.Module):
                 head_mask=head_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=encoder_attention_mask,
-                output_attentions=output_attentions
+                output_attentions=output_attentions,
             )
             attn_output = cross_attn_outputs[0]
             hidden_states = residual + attn_output
@@ -383,7 +434,7 @@ class GPT2Block(nn.Module):
         hidden_states = residual + feed_forward_hidden_states
 
         if use_cache:
-            outputs = (hidden_states,)+outputs
+            outputs = (hidden_states,) + outputs
         else:
-            outputs = (hidden_states,)+outputs[1:]
+            outputs = (hidden_states,) + outputs[1:]
         return outputs
