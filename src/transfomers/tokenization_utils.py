@@ -41,7 +41,8 @@ class Trie:
     def update(self, *args):
         for token in tuple(*args):
             self.add(token)
-    def add(self, word:str):
+
+    def add(self, word: str):
         """
         Passes over every char (utf-8 char) on word and recursively adds it to the internal `data` trie representation.
         The special key `""` in `self._termination_char` is used to represent termination.
@@ -66,17 +67,16 @@ class Trie:
         self._tokens.add(word)
         ref = self.data
         for char in word:
-            ref[char]=ref.setdefault(char, {})
+            ref[char] = ref.setdefault(char, {})
             ref = ref[char]
-        ref[self._termination_char] =1
+        ref[self._termination_char] = 1
 
-    
-    def split(self, text:str)-> List[str]:
+    def split(self, text: str) -> List[str]:
         states = OrderedDict()
         offset = [0]
         skip = 0
         for current, current_char in enumerate(text):
-            if skip and current< skip:
+            if skip and current < skip:
                 continue
 
             to_remove = set()
@@ -87,18 +87,19 @@ class Trie:
                         if lookstart > start:
                             break
                         elif lookstart < start:
-                            lookahead_index = current+1
-                            end = current+1
+                            lookahead_index = current + 1
+                            end = current + 1
                         else:
                             lookahead_index = current
                             end = current
-                        next_char = text[lookahead_index] if lookahead_index < len(text) else None
+                        next_char = (
+                            text[lookahead_index]
+                            if lookahead_index < len(text)
+                            else None
+                        )
                         if "" in looktrie_pointer:
                             start = lookstart
                             end = lookahead_index
-                            skip=lookahead_index
+                            skip = lookahead_index
                         while next_char in looktrie_pointer:
-                            
-
-
-
+                            print()
