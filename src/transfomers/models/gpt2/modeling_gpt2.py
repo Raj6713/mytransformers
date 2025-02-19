@@ -1398,6 +1398,7 @@ class GPT2ForSequenceClassification(GPT2PreTrainedModel):
             attentions=transformer_outputs.attentions,
         )
 
+
 @add_start_docstrings(
     """
     GPT2 Model with a token classification head on top (a linear layer on top of the hidden-states output) e.g. for
@@ -1410,14 +1411,17 @@ class GPT2ForTokenClassification(GPT2PreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.transformer = GPT2Model(config)
-        if hasattr(config, "classifier_dropout") and config.classifier_output is not None:
+        if (
+            hasattr(config, "classifier_dropout")
+            and config.classifier_output is not None
+        ):
             classifier_dropout = config.classifier_output
         elif hasattr(config, "hidden_dropout") and config.hidden_dropout is not None:
             classifier_dropout = config.classifier_dropout
         else:
             classifer_dropout = 0.1
         self.dropout = nn.Dropout(classifer_dropout)
-        self.classfier =  nn.Linear(config.hidden_size, config.num_labels)
+        self.classfier = nn.Linear(config.hidden_size, config.num_labels)
         self.model_parallel = False
         self.device_map = None
         self.post_init()
@@ -1445,18 +1449,18 @@ class GPT2ForTokenClassification(GPT2PreTrainedModel):
     )
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor]=None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]]=None,
-        attention_mask: Optional[torch.FloatTensor]=None,
-        token_type_ids: Optional[torch.LongTensor]=None,
-        position_ids: Optional[torch.LongTensor]=None,
-        head_mask: Optional[torch.FloatTensor]=None,
-        inputs_embeds: Optional[torch.FloatTensor]=None,
-        labels: Optional[torch.LongTensor]=None,
-        use_cache: Optional[bool]=None,
-        output_attentions: Optional[bool]=None,
-        output_hidden_states: Optional[bool]=None,
-        return_dict: Optional[bool]=None
+        input_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
     ) -> Union[Tuple, TokenClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1464,7 +1468,9 @@ class GPT2ForTokenClassification(GPT2PreTrainedModel):
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
@@ -1476,7 +1482,7 @@ class GPT2ForTokenClassification(GPT2PreTrainedModel):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict
+            return_dict=return_dict,
         )
         hidden_states = transformer_outputs[0]
         hidden_states = self.dropout(hidden_states)
@@ -1488,14 +1494,15 @@ class GPT2ForTokenClassification(GPT2PreTrainedModel):
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
         if not return_dict:
-            output = (logits,)+ transformer_outputs[2:]
-            return ((loss,)+output) if loss is not None else output
+            output = (logits,) + transformer_outputs[2:]
+            return ((loss,) + output) if loss is not None else output
         return TokenClassifierOutput(
             loss=loss,
             logits=logits,
             hidden_states=transformer_outputs.hidden_states,
-            attentions=transformer_outputs.attentions
+            attentions=transformer_outputs.attentions,
         )
+
 
 @add_start_docstrings(
     """
@@ -1518,7 +1525,9 @@ class GPT2ForQuestionAnswering(GPT2PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
+    @add_start_docstrings_to_model_forward(
+        GPT2_INPUTS_DOCSTRING.format("batch_size, sequence_length")
+    )
     @add_code_sample_docstrings(
         checkpoint=_CHECKPOINT_FOR_DOC,
         output_type=QuestionAnsweringModelOutput,
@@ -1549,7 +1558,9 @@ class GPT2ForQuestionAnswering(GPT2PreTrainedModel):
             Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
             are not taken into account for computing the loss.
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         outputs = self.transformer(
             input_ids,
