@@ -239,15 +239,26 @@ class WhisperFeatureExtractor(SequenceFeatureExtractor):
                     "It is strongly recommened to pass the `sampling_rate` argument to this function"
                     "Failing to do so can result in silent errors that might be hard to debug"
                 )
-            is_batched_numpy = isinstance(raw_speech, np.ndarray) and len(raw_speech.shape) > 1
+            is_batched_numpy = (
+                isinstance(raw_speech, np.ndarray) and len(raw_speech.shape) > 1
+            )
             if is_batched_numpy and len(raw_speech.shape) > 2:
-                raise ValueError(f"Only mono-channel audio is supported for input to {self}")
-            is_batched = is_batched_numpy or (isinstance(raw_speech, (list, tuple)) and (isinstance(raw_speech[0], (np.ndarray, tuple, list))))
+                raise ValueError(
+                    f"Only mono-channel audio is supported for input to {self}"
+                )
+            is_batched = is_batched_numpy or (
+                isinstance(raw_speech, (list, tuple))
+                and (isinstance(raw_speech[0], (np.ndarray, tuple, list)))
+            )
             if is_batched:
-                raw_speech = [np.asarray([speech], dtype=np.float32).T for speech in raw_speech]
+                raw_speech = [
+                    np.asarray([speech], dtype=np.float32).T for speech in raw_speech
+                ]
             elif not is_batched and not isinstance(raw_speech, np.ndarray):
                 raw_speech = np.asarray(raw_speech, dtype=np.float32)
-            elif isinstance(raw_speech, np.ndarray) and raw_speech.dtype is np.dtype(np.float64):
+            elif isinstance(raw_speech, np.ndarray) and raw_speech.dtype is np.dtype(
+                np.float64
+            ):
                 raw_speech = raw_speech.astype(np.float32)
             if not is_batched:
                 raw_speech = [np.asarray([raw_speech]).T]
@@ -264,23 +275,33 @@ class WhisperFeatureExtractor(SequenceFeatureExtractor):
                 padded_inputs["input_features"] = self.zero_mean_unit_var_norm(
                     padded_inputs["input_features"],
                     attention_mask=padded_inputs["attention_mask"],
-                    padding_values=self.padding_value
+                    padding_values=self.padding_value,
                 )
-            input_features = padded_inputs.get("input_features").transpose(2,0,1)
-            extract_fbank_features = self._torch_extract_fbank_features if is_torch_available() else self._np_extract_fbank_features
+            input_features = padded_inputs.get("input_features").transpose(2, 0, 1)
+            extract_fbank_features = (
+                self._torch_extract_fbank_features
+                if is_torch_available()
+                else self._np_extract_fbank_features
+            )
             input_features = extract_fbank_features(input_features[0], device)
 
             if isinstance(input_features[0], List):
-                padded_inputs["input_features"] = [np.asarray(feature, dtype=np.float32) for feature in input_features]
+                padded_inputs["input_features"] = [
+                    np.asarray(feature, dtype=np.float32) for feature in input_features
+                ]
             else:
                 padded_inputs["input_features"] = input_features
-            
+
             if return_attention_mask:
-                padded_inputs["attention_mask"] = padded_inputs["attention_mask"][:,::self.hop_length]
+                padded_inputs["attention_mask"] = padded_inputs["attention_mask"][
+                    :, :: self.hop_length
+                ]
             if return_attention_mask:
-                padded_inputs["num_frames"] = [len(raw_speech_i)//self.hop_length for raw_speech_i in raw_speech]
+                padded_inputs["num_frames"] = [
+                    len(raw_speech_i) // self.hop_length for raw_speech_i in raw_speech
+                ]
             if return_tensors is not None:
-                padded_inputs =padded_inputs.convert_to_tensors(return_tensors)
+                padded_inputs = padded_inputs.convert_to_tensors(return_tensors)
             return padded_inputs
-        
+
     __all__ = ["WhisperFeatureExtractor"]
